@@ -1,4 +1,4 @@
-flask>=3.0
+PySide6>=6.6
 numpy>=1.26
 opencv-python>=4.9
 matplotlib>=3.8
