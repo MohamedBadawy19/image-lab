@@ -5,20 +5,6 @@ import numpy as np
 from core.base import ImageProcessor
 
 
-def convolve(image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
-    """Gray or RGB (per channel), reflect padding, non-square kernels allowed (Roberts 2x2),
-    vectorized with sliding_window_view. Returns FLOAT, no clipping."""
-    raise NotImplementedError
-
-
-def mse(a: np.ndarray, b: np.ndarray) -> float:
-    raise NotImplementedError
-
-
-def psnr(a: np.ndarray, b: np.ndarray) -> float:
-    raise NotImplementedError
-
-
 KERNEL_SIZE = {
     "type": "int",
     "min": 3,
@@ -28,13 +14,45 @@ KERNEL_SIZE = {
     "label": "Kernel size (odd)",
 }
 
+def convolve(image, kernel):
+    kh, kw = kernel.shape
+    padded = pad(image, kh, kw)
+    output = np.zeros_like(image, dtype=np.float64)
+    for i in range(image.shape[0]):
+        for j in range(image.shape[1]):
+            output[i, j] = np.sum(padded[i:i+kh, j:j+kw] * kernel)
+    return output
+
+def pad(img, kh, kw):
+    # ph: increase height,   pw: increase width
+    ph, pw = (kh - 1)//2, (kw - 1)//2
+    padded = np.pad(img, ((ph, ph), (pw, pw)), "constant")
+    return padded
+
+
+def mse(a, b) :
+    a = a.astype(np.float64)    # avoid uint8 wraparound (5 - 10 = 251) and overflow when squaring
+    b = b.astype(np.float64)
+    return np.mean((a - b)**2)
+
+
+def psnr(a, b):
+    err = mse(a,b)
+    if err == 0:
+        return float("inf")
+    return 10 * np.log10(255.0 ** 2 / err)  # 255 for non-normalized images
+
+
+
 
 class AverageFilter(ImageProcessor):
     name = "Average"
     params_schema = {"kernel_size": KERNEL_SIZE}
 
     def _process(self, image, kernel_size, **_):
-        raise NotImplementedError
+        
+        return cov
+
 
 
 class GaussianFilter(ImageProcessor):
