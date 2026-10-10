@@ -17,8 +17,24 @@ class HistogramResult:
 class HistogramAnalyzer:
     @staticmethod
     def analyze(channel: np.ndarray) -> HistogramResult:
-        """np.bincount(channel.ravel(), minlength=256). Computed ONCE per channel; callers reuse it."""
-        raise NotImplementedError
+        """Calculate histogram, PDF, and CDF for a uint8 image channel."""
+        if not isinstance(channel, np.ndarray) or channel.size == 0:
+            raise ValueError("Channel must be a non-empty NumPy array.")
+
+        if channel.ndim != 2:
+            raise ValueError("Expected a single 2D image channel.")
+
+        if not np.issubdtype(channel.dtype, np.integer):
+            raise ValueError("Histogram analysis requires integer pixel values.")
+
+        if np.any(channel < 0) or np.any(channel > 255):
+            raise ValueError("Pixel values must be between 0 and 255.")
+
+        hist = np.bincount(channel.ravel().astype(np.int64), minlength=256)
+        pdf = hist.astype(np.float64) / channel.size
+        cdf = np.cumsum(pdf)
+
+        return HistogramResult(hist=hist, pdf=pdf, cdf=cdf)
 
 
 class HistogramEqualizer(ImageProcessor):
