@@ -3,8 +3,9 @@
 from dataclasses import dataclass
 
 import numpy as np
+import cv2
 
-from core.base import ImageProcessor
+from core.base import ImageProcessor, InvalidParameterError, UnsupportedImageError
 
 
 class FrequencyFilter(ImageProcessor):
@@ -129,7 +130,7 @@ class FrequencyFilter(ImageProcessor):
 @dataclass
 class HybridResult:
     low: np.ndarray  # low-pass of image A
-    high: np.ndarray  # high-pass of image B
+    high: np.ndarray  # high-pass of image B, centered at mid-gray for display
     hybrid: np.ndarray  # low + high
 
 
@@ -141,9 +142,47 @@ class HybridBuilder:
         cutoff_low: int = 20,
         cutoff_high: int = 20,
     ) -> HybridResult:
-        """Resize B to A's shape (raise InvalidParameterError if impossible).
-        Reuse FrequencyFilter masks."""
-        raise NotImplementedError
+        """Combine the low frequencies of A with the high frequencies of B."""
+        for image in (image_a, image_b):
+            if (
+                not isinstance(image, np.ndarray)
+                or image.size == 0
+                or image.ndim not in (2, 3)
+                or (image.ndim == 3 and image.shape[2] != 3)
+            ):
+                raise UnsupportedImageError("Hybrid images must be grayscale or 3-channel RGB.")
 
+        if image_a.ndim != image_b.ndim or (
+            image_a.ndim == 3 and image_a.shape[2] != image_b.shape[2]
+        ):
+            raise UnsupportedImageError("Both hybrid images must use the same color mode.")
+        if cutoff_low < 1 or cutoff_high < 1:
+            raise InvalidParameterError("Hybrid cutoff radii must be at least 1.")
+
+        target_shape = image_a.shape[:2]
+        image_b_resized = cv2.resize(
+            image_b, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_LINEAR
+        )
+        frequency_filter = FrequencyFilter()
+        low_pass_a = frequency_filter._reconstruct(
+            frequency_filter._get_fft(image_a),
+            pass_type="low",
+            mask_type="gaussian",
+            cutoff=cutoff_low,
+        )
+        high_pass_b = frequency_filter._reconstruct(
+            frequency_filter._get_fft(image_b_resized),
+            pass_type="high",
+            mask_type="gaussian",
+            cutoff=cutoff_high,
+        )
+
+        # QImage expects 8-bit pixel data. Keep the signed high-pass values for
+        # the actual blend, but center its preview around gray so both polarities show.
+        return HybridResult(
+            low=np.clip(np.rint(low_pass_a), 0, 255).astype(np.uint8),
+            high=np.clip(np.rint(high_pass_b + 128), 0, 255).astype(np.uint8),
+            hybrid=np.clip(np.rint(low_pass_a + high_pass_b), 0, 255).astype(np.uint8),
+        )
 
 FREQ_FILTERS = {FrequencyFilter.name: FrequencyFilter}
