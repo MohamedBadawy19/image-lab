@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from core.base import ImageProcessor
+from core.base import ImageProcessor , InvalidParameterError
 
 
 @dataclass
@@ -48,18 +48,14 @@ class HistogramEqualizer(ImageProcessor):
 
     handles_color = True  # receives the full array, not per-channel
 
-    # The base class apply() converts input to float64 before calling _process.
-    # We override _finalize to return the result as-is (already uint8) so the
-    # base class doesn't run to_uint8 a second time on top of our output.
-    def _finalize(self, out: np.ndarray) -> np.ndarray:
-        return out
+
 
     def _equalize_channel(self, channel: np.ndarray, result: HistogramResult | None = None):
         # channel arrives as float64 from the pipeline — clip and cast safely
         # before using it as a LUT index (floats can't index arrays).
         channel = np.clip(np.round(channel), 0, 255).astype(np.uint8)
         result = result or HistogramAnalyzer.analyze(channel)
-        lut = np.round(result.cdf * 255).astype(np.uint8)
+        lut = (result.cdf * 255)  # float64 — _finalize will clip+cast to uint8
         return lut[channel]
 
     def _process(self, image: np.ndarray, **params) -> np.ndarray:
@@ -97,13 +93,13 @@ class ImageNormalizer(ImageProcessor):
     def _process(self, image: np.ndarray, new_min: int = 0, new_max: int = 255, **params) -> np.ndarray:
         """Min-max stretch to [new_min, new_max]. Flat image stays at new_min."""
         if not (0 <= new_min < new_max <= 255):
-            raise ValueError("Require 0 <= new_min < new_max <= 255.")
+            raise InvalidParameterError("Require 0 <= new_min < new_max <= 255.")
         old_min = image.min()
         old_max = image.max()
         if old_max == old_min:
-            return np.full_like(image, new_min, dtype=np.uint8) 
+            return np.full_like(image, new_min, dtype=np.float64)  # _finalize casts to uint8
         stretched = (image - old_min) / (old_max - old_min) * (new_max - new_min) + new_min
-        return np.clip(np.round(stretched), 0, 255).astype(np.uint8)
+        return stretched  # float64 — _finalize will clip+round+cast to uint8
 
         
 

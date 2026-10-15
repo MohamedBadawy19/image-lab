@@ -123,8 +123,8 @@ class FrequencyFilter(ImageProcessor):
         # Calculate or retrieve the FFT for the whole image
         fft_result = self._get_fft(image)
 
-        # Reconstruct the filtered image
-        return np.clip(np.rint(self._reconstruct(fft_result, pass_type, mask_type, cutoff)), 0, 255).astype(np.uint8)
+        # Reconstruct the filtered image — float64 returned; _finalize clips+casts to uint8
+        return self._reconstruct(fft_result, pass_type, mask_type, cutoff)
 
 
 @dataclass
