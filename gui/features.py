@@ -14,7 +14,7 @@ from core.base import InvalidParameterError, UnsupportedImageError
 from core.edges import EDGES, EdgeResult
 from core.filters import FILTERS
 from core.frequency import FREQ_FILTERS, FrequencyFilter, HybridBuilder, HybridResult
-from core.histogram import HISTOGRAM_TOOLS
+from core.histogram import HISTOGRAM_TOOLS, HistogramAnalyzer 
 from core.image_data import ImageData
 from core.noise import NOISES
 
@@ -213,6 +213,18 @@ def run_feature(
         mask_display = (np.clip(mask, 0, 1) * 255).astype(np.uint8)
         return FeatureOutput(result=res, extras={"mask": mask_display})
 
+    # Special case: Histogram tools
+    if entry.group == "Histogram":
+        processor = entry.processor_cls()
+        # HistogramAnalyzer is not an ImageProcessor — call analyze() directly
+        if entry.processor_cls is HistogramAnalyzer:
+            # Return the CDF as a displayable image (or handle in analysis panel)
+            result = HistogramAnalyzer.analyze(image_data.gray)
+            cdf_display = (result.cdf * 255).astype(np.uint8)
+            return FeatureOutput(result=image_data.array, extras={"cdf": cdf_display})
+        res = processor.apply(image_data.array, **params)
+        
+        return FeatureOutput(result=res)
     # General case: ImageProcessor subclass (Noise, Filters, Histogram tools)
     processor = entry.processor_cls()
     res = processor.apply(image_data.array, **params)

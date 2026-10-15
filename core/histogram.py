@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+
 import numpy as np
 
 from core.base import ImageProcessor
@@ -15,20 +16,24 @@ class HistogramResult:
 
 
 class HistogramAnalyzer:
+    name = "Analyze"
+    params_schema = {}
     @staticmethod
     def analyze(channel: np.ndarray) -> HistogramResult:
-        """Calculate histogram, PDF, and CDF for a uint8 image channel."""
+        """Calculate histogram, PDF, and CDF for an image channel.
+
+        Accepts any numeric dtype (uint8, float64, etc.) and converts to
+        uint8 internally so callers don't need to pre-cast.
+        """
         if not isinstance(channel, np.ndarray) or channel.size == 0:
             raise ValueError("Channel must be a non-empty NumPy array.")
 
         if channel.ndim != 2:
             raise ValueError("Expected a single 2D image channel.")
 
-        if not np.issubdtype(channel.dtype, np.integer):
-            raise ValueError("Histogram analysis requires integer pixel values.")
-
-        if np.any(channel < 0) or np.any(channel > 255):
-            raise ValueError("Pixel values must be between 0 and 255.")
+        # Convert any numeric type to uint8 safely so float64 images
+        # from the pipeline or analysis panel don't cause a silent blank.
+        channel = np.clip(np.round(channel), 0, 255).astype(np.uint8)
 
         hist = np.bincount(channel.ravel().astype(np.int64), minlength=256)
         pdf = hist.astype(np.float64) / channel.size
@@ -41,10 +46,31 @@ class HistogramEqualizer(ImageProcessor):
     name = "Equalize"
     params_schema = {}
 
-    def _process(self, image, **_):
-        """new = round(CDF * 255) through a lookup table (reuse HistogramAnalyzer's CDF).
-        RGB: team must choose per-channel OR luminance (Y of YCrCb) and document it."""
-        raise NotImplementedError
+    handles_color = True  # receives the full array, not per-channel
+
+    # The base class apply() converts input to float64 before calling _process.
+    # We override _finalize to return the result as-is (already uint8) so the
+    # base class doesn't run to_uint8 a second time on top of our output.
+    def _finalize(self, out: np.ndarray) -> np.ndarray:
+        return out
+
+    def _equalize_channel(self, channel: np.ndarray, result: HistogramResult | None = None):
+        # channel arrives as float64 from the pipeline — clip and cast safely
+        # before using it as a LUT index (floats can't index arrays).
+        channel = np.clip(np.round(channel), 0, 255).astype(np.uint8)
+        result = result or HistogramAnalyzer.analyze(channel)
+        lut = np.round(result.cdf * 255).astype(np.uint8)
+        return lut[channel]
+
+    def _process(self, image: np.ndarray, **params) -> np.ndarray:
+        if image.ndim == 2:
+            return self._equalize_channel(image)
+        equalized_channels = [
+            self._equalize_channel(image[..., ch])
+            for ch in range(image.shape[-1])
+        ]
+        return np.stack(equalized_channels, axis=-1)
+
 
 
 class ImageNormalizer(ImageProcessor):
@@ -68,9 +94,17 @@ class ImageNormalizer(ImageProcessor):
         },
     }
 
-    def _process(self, image, new_min, new_max, **_):
-        """Min-max stretch. A flat image (max == min) must not divide by zero."""
-        raise NotImplementedError
+    def _process(self, image: np.ndarray, new_min: int = 0, new_max: int = 255, **params) -> np.ndarray:
+        """Min-max stretch to [new_min, new_max]. Flat image stays at new_min."""
+        if not (0 <= new_min < new_max <= 255):
+            raise ValueError("Require 0 <= new_min < new_max <= 255.")
+        old_min = image.min()
+        old_max = image.max()
+        if old_max == old_min:
+            return np.full_like(image, new_min, dtype=np.uint8) 
+        stretched = (image - old_min) / (old_max - old_min) * (new_max - new_min) + new_min
+        return np.clip(np.round(stretched), 0, 255).astype(np.uint8)
 
+        
 
 HISTOGRAM_TOOLS = {c.name: c for c in (HistogramEqualizer, ImageNormalizer)}
