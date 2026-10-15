@@ -124,7 +124,7 @@ class FrequencyFilter(ImageProcessor):
         fft_result = self._get_fft(image)
 
         # Reconstruct the filtered image
-        return self._reconstruct(fft_result, pass_type, mask_type, cutoff)
+        return np.clip(np.rint(self._reconstruct(fft_result, pass_type, mask_type, cutoff)), 0, 255).astype(np.uint8)
 
 
 @dataclass
