@@ -4,7 +4,6 @@ import time
 import numpy as np
 
 from functools import wraps
-from core.utils import to_float
 
 def timed(fn):
     # Decorator that prints how long each call to fn takes
