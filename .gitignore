@@ -9,3 +9,5 @@ dist/
 build/
 *.spec
 *.log
+my_tasks.txt
+

@@ -84,4 +84,4 @@ class ImageProcessor(ABC):
         """Subclasses implement ONLY this step."""
 
     def _finalize(self, out):
-        return out.clip(0, 255).astype(np.uint8)
+        return to_uint8(out)
