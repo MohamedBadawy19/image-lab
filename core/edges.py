@@ -4,9 +4,10 @@ from dataclasses import dataclass
 
 import numpy as np
 import cv2
+
 from core.base import ImageProcessor, InvalidParameterError
 from core.convolution import convolve
-
+from core.utils import to_uint8
 
 @dataclass
 class EdgeResult:
@@ -20,7 +21,7 @@ def to_display(values: np.ndarray) -> np.ndarray:
     peak = values.max()
     if peak == 0:                          # no edges at all
         return np.zeros(values.shape, dtype=np.uint8)
-    return (values / peak * 255).astype(np.uint8)
+    return to_uint8(values / peak * 255)
 
 class EdgeDetector(ImageProcessor):
     """Subclasses implement _process(gray) -> EdgeResult. _finalize returns the result unchanged."""
@@ -104,7 +105,7 @@ class CannyDetector(EdgeDetector):
             raise InvalidParameterError("Low and high thresholds must be between 0 and 255.")
         # cv2.Canny requires uint8. detect() passes the gray image directly,
         # but if this is ever called via apply() the input will be float64.
-        gray_u8 = np.clip(np.round(gray), 0, 255).astype(np.uint8)
+        gray_u8 = to_uint8(gray)
         return EdgeResult(None, None, cv2.Canny(gray_u8, low, high))
 
         
