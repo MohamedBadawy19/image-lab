@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 from core.base import ImageLoadError, UnsupportedImageError
+from core.utils import to_gray, to_uint8
 
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 
@@ -67,10 +68,7 @@ class ImageData:
 
     @cached_property
     def gray(self) -> np.ndarray:
-        """FROM SCRATCH (task 8): 0.299 R + 0.587 G + 0.114 B. Cached: computed once per image."""
+        """0.299 R + 0.587 G + 0.114 B. Cached: computed once per image."""
         if self.is_gray:
             return self.array
-        weights = np.array([0.299, 0.587, 0.114])
-        return np.clip(np.rint(self.array[..., :3].astype(np.float64) @ weights), 0, 255).astype(
-            np.uint8
-        )
+        return to_uint8(to_gray(self.array[..., :3]))

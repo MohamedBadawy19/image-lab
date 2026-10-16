@@ -6,7 +6,7 @@ import numpy as np
 import cv2
 
 from core.base import ImageProcessor, InvalidParameterError, UnsupportedImageError
-
+from core.utils import to_uint8
 
 class FrequencyFilter(ImageProcessor):
     name = "Frequency filter"
@@ -67,7 +67,7 @@ class FrequencyFilter(ImageProcessor):
             normalized = np.zeros_like(log_magnitude)
 
         # 6. Convert to uint8
-        return normalized.astype(np.uint8)
+        return to_uint8(normalized)
 
     def mask(self,shape: tuple,pass_type: str,mask_type: str,cutoff: int) -> np.ndarray:
 
@@ -180,9 +180,9 @@ class HybridBuilder:
         # QImage expects 8-bit pixel data. Keep the signed high-pass values for
         # the actual blend, but center its preview around gray so both polarities show.
         return HybridResult(
-            low=np.clip(np.rint(low_pass_a), 0, 255).astype(np.uint8),
-            high=np.clip(np.rint(high_pass_b + 128), 0, 255).astype(np.uint8),
-            hybrid=np.clip(np.rint(low_pass_a + high_pass_b), 0, 255).astype(np.uint8),
+            low=to_uint8(low_pass_a),
+            high=to_uint8(high_pass_b + 128),
+            hybrid=to_uint8(low_pass_a + high_pass_b),
         )
 
 FREQ_FILTERS = {FrequencyFilter.name: FrequencyFilter}

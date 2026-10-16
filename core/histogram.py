@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from core.base import ImageProcessor , InvalidParameterError
-
+from core.utils import to_float, to_uint8
 
 @dataclass
 class HistogramResult:
@@ -31,12 +31,10 @@ class HistogramAnalyzer:
         if channel.ndim != 2:
             raise ValueError("Expected a single 2D image channel.")
 
-        # Convert any numeric type to uint8 safely so float64 images
-        # from the pipeline or analysis panel don't cause a silent blank.
-        channel = np.clip(np.round(channel), 0, 255).astype(np.uint8)
+        channel = to_uint8(channel)
 
-        hist = np.bincount(channel.ravel().astype(np.int64), minlength=256)
-        pdf = hist.astype(np.float64) / channel.size
+        hist = np.bincount(channel.ravel(), minlength=256)  
+        pdf = to_float(hist) / channel.size
         cdf = np.cumsum(pdf)
 
         return HistogramResult(hist=hist, pdf=pdf, cdf=cdf)
@@ -53,9 +51,9 @@ class HistogramEqualizer(ImageProcessor):
     def _equalize_channel(self, channel: np.ndarray, result: HistogramResult | None = None):
         # channel arrives as float64 from the pipeline — clip and cast safely
         # before using it as a LUT index (floats can't index arrays).
-        channel = np.clip(np.round(channel), 0, 255).astype(np.uint8)
+        channel = to_uint8(channel)
         result = result or HistogramAnalyzer.analyze(channel)
-        lut = (result.cdf * 255)  # float64 — _finalize will clip+cast to uint8
+        lut = result.cdf * 255
         return lut[channel]
 
     def _process(self, image: np.ndarray, **params) -> np.ndarray:

@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from core.utils import to_uint8
+from core.utils import to_uint8, to_float
 
 
 class AppError(Exception):
@@ -48,7 +48,7 @@ class ImageProcessor(ABC):
     def apply(self, image: np.ndarray, **params):
         params = self._with_defaults(params)
         self._validate(image, **params)
-        return self._finalize(self._run(image.astype(np.float64), **params))
+        return self._finalize(self._run(to_float(image), **params))
 
     def _run(self, data, **params):
         if data.ndim == 3 and not self.handles_color:
