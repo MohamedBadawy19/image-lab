@@ -1,10 +1,10 @@
 """Shared image helpers. No dependency on the processor classes."""
 
 import time
-from functools import wraps
-
 import numpy as np
 
+from functools import wraps
+from core.utils import to_float
 
 def timed(fn):
     # Decorator that prints how long each call to fn takes
@@ -27,17 +27,20 @@ def pad(img, kh, kw, mode="constant"):
 
 # ------------------------------------------------------------------- metrics
 def mse(a, b):
-    a = a.astype(np.float64)    # avoid uint8 wraparound and overflow when squaring
-    b = b.astype(np.float64)
+    a = to_float(a)    # avoid uint8 wraparound and overflow when squaring
+    b = to_float(b)
     return np.mean((a - b) ** 2)
 
 
-def psnr(a, b):
-    err = mse(a, b)
-    if err == 0:
-        return float("inf")
-    return 10 * np.log10(255.0 ** 2 / err)
+# def psnr(a, b):
+#     err = mse(a, b)
+#     if err == 0:
+#         return float("inf")
+#     return 10 * np.log10(255.0 ** 2 / err)
 
+
+def to_float(img):
+    return img.astype(np.float64, copy=False)
 
 def to_uint8(img):
     return np.round(np.clip(img, 0, 255)).astype(np.uint8)

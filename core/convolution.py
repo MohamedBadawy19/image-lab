@@ -3,7 +3,7 @@
 import numpy as np
 from scipy import ndimage
 
-from core.utils import timed, pad
+from core.utils import timed, pad, to_float
 
 
 METHODS = ("naive", "optimized", "scipy")
@@ -67,9 +67,15 @@ def convolve_optimized(image, kernel):
 
 @timed
 def convolve_scipy(image, kernel):
-    # built-in. float64 is needed: ndimage keeps the input dtype (uint8 would clip)
-    # odd kernels only (same alignment as pad() for odd sizes)
-    return ndimage.correlate(image.astype(np.float64), kernel, mode="constant", cval=0.0)
+    assert kernel.shape[0] == kernel.shape[1], "kernel must be square"
+
+    # 0 for odd kernels, -1 for even kernels (to match pad() alignment)
+    origin = 0 if kernel.shape[0] % 2 == 1 else -1
+    
+    # float64 is needed: ndimage keeps the input dtype (uint8 would clip)
+    return ndimage.correlate(
+        to_float(image), kernel, mode="constant", cval=0.0, origin=origin
+    )
 
 
 
