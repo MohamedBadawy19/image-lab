@@ -3,9 +3,11 @@
 from abc import abstractmethod
 
 import numpy as np
+from scipy import ndimage
 
 from core.base import ImageProcessor
-from core.utils import convolve, sliding_window
+from core.convolution import convolve
+from core.utils import timed
 
 
 KERNEL_SIZE = {
@@ -15,23 +17,27 @@ KERNEL_SIZE = {
     "step": 2,
     "default": 3,
     "odd": True,
-    "label": "Kernel size (odd)",   
+    "label": "Kernel size (odd)",
 }
 
 
 class KernelFilter(ImageProcessor):
     """Linear filters: subclasses only build the kernel."""
 
+    # algorithm used for the convolution: "naive" | "optimized" | "scipy"
+    method = "scipy"
+
     @abstractmethod    # every subclass must implement
     def build_kernel(self, **params):
         ...
 
     def _process(self, image, **params):
-        return convolve(image, self.build_kernel(**params))
+        return convolve(image, self.build_kernel(**params), method=self.method)
 
 
 class AverageFilter(KernelFilter):
     name = "Average"
+    method = "naive"    # change to "naive" or "scipy" to compare
     params_schema = {"kernel_size": KERNEL_SIZE}
 
     def build_kernel(self, kernel_size, **_):
@@ -40,6 +46,7 @@ class AverageFilter(KernelFilter):
 
 class GaussianFilter(KernelFilter):
     name = "Gaussian"
+    method = "scipy"
     params_schema = {
         "kernel_size": {**KERNEL_SIZE, "default": 5},
         "sigma": {"type": "float", "min": 0.1, "max": 10, "step": 0.1, "default": 1.0, "label": "Sigma"},
@@ -54,12 +61,21 @@ class GaussianFilter(KernelFilter):
         return k / k.sum()
 
 
+
+@timed
+def median_scipy(image, k):
+    # median is not a convolution, so it only has the scipy implementation
+    return ndimage.median_filter(image.astype(np.float64, copy=False), size=k, mode="nearest")
+
+
+# Median filter is only applied with scipy
 class MedianFilter(ImageProcessor):
     name = "Median"
+    method = "scipy"
     params_schema = {"kernel_size": KERNEL_SIZE}
 
     def _process(self, image, kernel_size, **_):
-        return sliding_window(image, kernel_size, kernel_size, np.median, pad_mode="edge")
+        return median_scipy(image, kernel_size)
 
 
 FILTERS = {c.name: c for c in (AverageFilter, GaussianFilter, MedianFilter)}
