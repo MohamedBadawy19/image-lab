@@ -1,6 +1,22 @@
 """Shared image helpers. No dependency on the processor classes."""
 
+import time
+from functools import wraps
+
 import numpy as np
+
+
+def timed(fn):
+    # Decorator that prints how long each call to fn takes
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        result = fn(*args, **kwargs)
+        elapsed = time.perf_counter() - start
+        shapes = ", ".join(str(a.shape) for a in args if hasattr(a, "shape"))
+        print(f"{fn.__name__}({shapes}) took {elapsed:.4f} s")
+        return result
+    return wrapper
 
 
 def pad(img, kh, kw, mode="constant"):
@@ -9,20 +25,7 @@ def pad(img, kh, kw, mode="constant"):
     return np.pad(img, (((kh - 1) // 2, kh // 2), ((kw - 1) // 2, kw // 2)), mode=mode)
 
 
-def sliding_window(image, kh, kw, fn, pad_mode="constant"):
-    padded = pad(image, kh, kw, mode=pad_mode)
-    output = np.zeros_like(image, dtype=np.float64)
-    for i in range(image.shape[0]):
-        for j in range(image.shape[1]):
-            output[i, j] = fn(padded[i:i + kh, j:j + kw])
-    return output
-
-
-def convolve(image, kernel):
-    kh, kw = kernel.shape
-    return sliding_window(image, kh, kw, lambda w: np.sum(w * kernel))
-
-
+# ------------------------------------------------------------------- metrics
 def mse(a, b):
     a = a.astype(np.float64)    # avoid uint8 wraparound and overflow when squaring
     b = b.astype(np.float64)

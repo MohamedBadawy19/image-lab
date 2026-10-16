@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 import cv2
 from core.base import ImageProcessor, InvalidParameterError
-from core.utils import convolve 
+from core.convolution import convolve
 
 
 @dataclass

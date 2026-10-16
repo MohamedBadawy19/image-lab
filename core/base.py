@@ -52,7 +52,11 @@ class ImageProcessor(ABC):
 
     def _run(self, data, **params):
         if data.ndim == 3 and not self.handles_color:
+            method = getattr(self, "method", None)
+            title = f"{self.name} ({method})" if method else self.name
+            print(f"## {title}")
             channels = [self._process(data[..., c], **params) for c in range(data.shape[2])]
+            print("=" * 30)
             return np.stack(channels, axis=-1)
         return self._process(data, **params)
 
