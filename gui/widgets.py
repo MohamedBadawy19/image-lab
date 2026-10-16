@@ -4,7 +4,7 @@ These are generic, reusable components that never hardcode any feature name.
 The GUI builds all its controls dynamically from params_schema dictionaries.
 """
 
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, QSize
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QGroupBox,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QSizePolicy,
+    QPushButton,
 )
 
 import numpy as np
@@ -25,39 +26,59 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 # ---------------------------------------------------------------------------
-# ImageViewer — titled panel showing a numpy image with zoom/pan
+# ImageViewer - titled panel showing a numpy image with zoom/pan
 # ---------------------------------------------------------------------------
 
 
 class ImageViewer(QGroupBox):
     """Titled panel that displays a numpy image (gray or RGB), scaled to fit.
 
-    Features: mouse-wheel zoom, drag pan, double-click to reset.
-    Shows image size and a 'Gray'/'RGB' badge in the title.
+    The image auto-fits the available panel area while keeping aspect ratio.
+    Features: mouse-wheel zoom, drag pan, double-click / Fit button to reset.
+    Shows image size and a Gray/RGB badge in the title.
+    Re-fits automatically on window/panel resize.
     """
 
     def __init__(self, title: str = "Image", parent=None):
         super().__init__(title, parent)
         self._title_base = title
-        self._current: np.ndarray | None = None
+        self._current = None  # np.ndarray | None
 
         # Scroll area for zoom/pan
         self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
+        self._scroll.setWidgetResizable(False)
         self._scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Label that holds the pixmap
         self._label = QLabel()
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self._scroll.setWidget(self._label)
 
+        # Fit button
+        self._fit_btn = QPushButton("Fit")
+        self._fit_btn.setFixedSize(44, 22)
+        self._fit_btn.setToolTip("Fit image to panel (double-click also works)")
+        self._fit_btn.setStyleSheet(
+            "QPushButton { font-size: 10px; padding: 2px 4px; border-radius: 4px; }"
+        )
+        self._fit_btn.clicked.connect(self._reset_zoom)
+
+        # Header row with Fit button flush right
+        header = QWidget()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.addStretch()
+        header_layout.addWidget(self._fit_btn)
+
         layout = QVBoxLayout()
-        layout.addWidget(self._scroll)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(2)
+        layout.addWidget(header)
+        layout.addWidget(self._scroll, 1)
         self.setLayout(layout)
 
-        self._pixmap: QPixmap | None = None
-        self._zoom = 1.0
+        self._pixmap = None  # QPixmap | None
+        self._zoom = 1.0  # 1.0 == fit-to-panel mode
 
         # Drag-pan state
         self._dragging = False
@@ -65,17 +86,23 @@ class ImageViewer(QGroupBox):
         self._scroll_start_h = 0
         self._scroll_start_v = 0
 
+        # Debounced resize handler
+        self._resize_timer = QTimer()
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(60)
+        self._resize_timer.timeout.connect(self._on_resize_debounced)
+
         self._label.installEventFilter(self)
         self._scroll.viewport().installEventFilter(self)
 
     # -- Public API --
 
     @property
-    def current(self) -> np.ndarray | None:
+    def current(self):
         """Last displayed image array (or None)."""
         return self._current
 
-    def set_image(self, array: np.ndarray | None) -> None:
+    def set_image(self, array) -> None:
         """Show a numpy image (HxW gray or HxWx3 RGB). None or empty clears."""
         if array is None or not isinstance(array, np.ndarray) or array.size == 0:
             self.clear()
@@ -91,6 +118,7 @@ class ImageViewer(QGroupBox):
         self._current = None
         self._pixmap = None
         self._label.clear()
+        self._label.resize(QSize(0, 0))
         self.setTitle(self._title_base)
 
     def set_title_base(self, title: str) -> None:
@@ -100,6 +128,15 @@ class ImageViewer(QGroupBox):
 
     # -- Internal helpers --
 
+    def _viewport_size(self) -> QSize:
+        """Available content area of the scroll area."""
+        return self._scroll.viewport().size()
+
+    def _reset_zoom(self) -> None:
+        """Reset to fit-to-panel mode."""
+        self._zoom = 1.0
+        self._update_display()
+
     def _update_title(self) -> None:
         """Update the group-box title with size + Gray/RGB badge."""
         if self._current is None:
@@ -107,19 +144,41 @@ class ImageViewer(QGroupBox):
             return
         h, w = self._current.shape[:2]
         mode = "Gray" if self._current.ndim == 2 else "RGB"
-        self.setTitle(f"{self._title_base}  [{w}×{h}]  {mode}")
+        self.setTitle(f"{self._title_base}  [{w}x{h}]  {mode}")
 
     def _update_display(self) -> None:
-        """Redraw the pixmap at the current zoom level."""
+        """Redraw the pixmap scaled to fit the viewport at the current zoom level."""
         if self._pixmap is None:
             return
-        scaled = self._pixmap.scaled(
-            self._pixmap.size() * self._zoom,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
+        vp = self._viewport_size()
+        if vp.width() < 4 or vp.height() < 4:
+            return
+        if self._zoom == 1.0:
+            # Fit mode: scale to fill viewport keeping aspect ratio
+            scaled = self._pixmap.scaled(
+                vp,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        else:
+            # Manual zoom: scale relative to native pixmap size
+            native = self._pixmap.size()
+            target = QSize(
+                max(1, int(native.width() * self._zoom)),
+                max(1, int(native.height() * self._zoom)),
+            )
+            scaled = self._pixmap.scaled(
+                target,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
         self._label.setPixmap(scaled)
         self._label.resize(scaled.size())
+
+    def _on_resize_debounced(self) -> None:
+        """Called after resize events settle; re-fits the image if in fit mode."""
+        if self._zoom == 1.0:
+            self._update_display()
 
     @staticmethod
     def _array_to_pixmap(array: np.ndarray) -> QPixmap:
@@ -133,14 +192,31 @@ class ImageViewer(QGroupBox):
             qimage = QImage(array.data, w, h, 3 * w, QImage.Format.Format_RGB888)
         return QPixmap.fromImage(qimage.copy())
 
-    # -- Event handling for zoom / pan --
+    # -- Event handling for zoom / pan / resize --
+
+    def resizeEvent(self, event) -> None:
+        """Trigger a debounced re-fit when the panel is resized."""
+        super().resizeEvent(event)
+        self._resize_timer.start()
 
     def eventFilter(self, obj, event):
-        """Handle wheel-zoom, drag-pan, and double-click-reset."""
+        """Handle viewport resize, wheel-zoom, drag-pan, and double-click-reset."""
+        # Viewport resize - re-fit if in fit mode
+        if obj is self._scroll.viewport() and event.type() == event.Type.Resize:
+            self._resize_timer.start()
+            return False
+
         if event.type() == event.Type.Wheel and self._pixmap is not None:
             delta = event.angleDelta().y()
             factor = 1.15 if delta > 0 else 1 / 1.15
-            self._zoom = max(0.1, min(10.0, self._zoom * factor))
+            # Transition from fit-mode: compute equivalent zoom factor first
+            if self._zoom == 1.0:
+                vp = self._viewport_size()
+                native = self._pixmap.size()
+                fit_w = vp.width() / native.width()
+                fit_h = vp.height() / native.height()
+                self._zoom = min(fit_w, fit_h)
+            self._zoom = max(0.05, min(20.0, self._zoom * factor))
             self._update_display()
             return True
 
@@ -163,15 +239,14 @@ class ImageViewer(QGroupBox):
             return True
 
         if event.type() == event.Type.MouseButtonDblClick:
-            self._zoom = 1.0
-            self._update_display()
+            self._reset_zoom()
             return True
 
         return super().eventFilter(obj, event)
 
 
 # ---------------------------------------------------------------------------
-# PlotCanvas — matplotlib figure for histograms / curves (dark style)
+# PlotCanvas - matplotlib figure for histograms / curves (dark style)
 # ---------------------------------------------------------------------------
 
 
@@ -215,13 +290,13 @@ class PlotCanvas(FigureCanvasQTAgg):
         """Set title for the main axes."""
         self.axes.set_title(text, fontsize=9, color=self.DARK_FG)
 
-    def plot_histogram(self, hist: np.ndarray, color: str = "white", label: str | None = None):
+    def plot_histogram(self, hist: np.ndarray, color: str = "white", label=None):
         """Plot a 256-bin histogram as a bar chart."""
         self.axes.bar(range(len(hist)), hist, color=color, alpha=0.6, width=1.0, label=label)
         if label:
             self.axes.legend(fontsize=7, facecolor=self.DARK_BG, edgecolor=self.DARK_FG)
 
-    def plot_curve(self, x, y, label: str | None = None, color: str | None = None):
+    def plot_curve(self, x, y, label=None, color=None):
         """Plot a curve (PDF, CDF, etc.)."""
         kwargs = {}
         if label:
@@ -236,7 +311,6 @@ class PlotCanvas(FigureCanvasQTAgg):
         """Clear and create a grid of subplots, returning a list/array of axes."""
         self.fig.clear()
         axes = self.fig.subplots(rows, cols)
-        # Style every axes
         if isinstance(axes, np.ndarray):
             for ax in axes.flat:
                 self._style_axes(ax)
@@ -252,7 +326,7 @@ class PlotCanvas(FigureCanvasQTAgg):
 
 
 # ---------------------------------------------------------------------------
-# ParamPanel — dynamic control panel built from a params_schema dict
+# ParamPanel - dynamic control panel built from a params_schema dict
 # ---------------------------------------------------------------------------
 
 
@@ -270,11 +344,10 @@ class ParamPanel(QGroupBox):
     def __init__(self, params_schema: dict = None, parent=None):
         super().__init__("Parameters", parent)
         self._schema: dict = {}
-        self._controls: dict = {}  # key -> widget (QSpinBox | QDoubleSpinBox | QComboBox)
+        self._controls: dict = {}  # key -> widget
         self._layout = QVBoxLayout()
         self.setLayout(self._layout)
 
-        # Debounce timer: emit 'changed' only after 250 ms of inactivity
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(250)
@@ -283,9 +356,13 @@ class ParamPanel(QGroupBox):
         if params_schema:
             self.set_schema(params_schema)
 
+    def set_feature(self, feature_name: str, schema: dict) -> None:
+        """Update title with the active feature name and rebuild parameter controls."""
+        self.setTitle(f"Parameters: {feature_name}")
+        self.set_schema(schema)
+
     def set_schema(self, schema: dict) -> None:
-        """Rebuild all controls from a new schema (called when the dropdown changes)."""
-        # Clear existing widgets
+        """Rebuild all controls from a new schema."""
         while self._layout.count():
             item = self._layout.takeAt(0)
             w = item.widget()
@@ -296,9 +373,14 @@ class ParamPanel(QGroupBox):
         self._schema = schema
         self._controls = {}
 
+        if not schema:
+            empty_lbl = QLabel("No adjustable parameters for this operation.")
+            empty_lbl.setStyleSheet("color: #6c7086; font-style: italic; padding: 6px;")
+            self._layout.addWidget(empty_lbl)
+            return
+
         for key, spec in schema.items():
             ptype = spec.get("type", "int")
-
             if ptype == "select":
                 self._add_combo(key, spec)
             elif ptype == "float":
@@ -315,8 +397,6 @@ class ParamPanel(QGroupBox):
             else:
                 result[key] = widget.value()
         return result
-
-    # -- Private helpers --
 
     def _add_combo(self, key: str, spec: dict) -> None:
         """Add a combo box for a 'select' type parameter."""
@@ -345,7 +425,6 @@ class ParamPanel(QGroupBox):
         step = spec.get("step", 1)
         default = spec.get("default", lo)
 
-        # For kernel_size ensure odd values only
         is_kernel = "kernel" in key.lower()
         if is_kernel:
             step = 2
@@ -365,10 +444,8 @@ class ParamPanel(QGroupBox):
             spin.setSingleStep(int(step))
             spin.setValue(int(default))
 
-        # Slider (integer representation)
         slider = QSlider(Qt.Orientation.Horizontal)
         if is_float:
-            # Map float range to integer slider with scaling
             scale = max(1, int(1.0 / step)) if step < 1 else 1
             slider.setRange(int(lo * scale), int(hi * scale))
             slider.setSingleStep(int(step * scale))
@@ -395,7 +472,7 @@ class ParamPanel(QGroupBox):
 
             def _on_slider_int(val, s=spin, is_k=is_kernel):
                 if is_k:
-                    val = val | 1  # force odd
+                    val = val | 1
                 s.blockSignals(True)
                 s.setValue(val)
                 s.blockSignals(False)
@@ -403,7 +480,7 @@ class ParamPanel(QGroupBox):
 
             def _on_spin_int(val, sl=slider, is_k=is_kernel):
                 if is_k:
-                    val = val | 1  # force odd
+                    val = val | 1
                 sl.blockSignals(True)
                 sl.setValue(val)
                 sl.blockSignals(False)

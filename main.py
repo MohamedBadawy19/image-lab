@@ -65,14 +65,16 @@ def _apply_dark_fusion(app: QApplication) -> None:
         QGroupBox {
             border: 1px solid #45475a;
             border-radius: 8px;
-            margin-top: 1em;
-            padding-top: 0.6em;
+            margin-top: 14px;
+            padding-top: 14px;
             font-weight: bold;
         }
         QGroupBox::title {
             subcontrol-origin: margin;
+            subcontrol-position: top left;
             left: 12px;
             padding: 0 6px;
+            background-color: #1e1e2e;
         }
         QPushButton {
             background-color: #313244;

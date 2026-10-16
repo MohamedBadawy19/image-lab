@@ -124,13 +124,22 @@ def _build_catalog() -> dict[str, list[FeatureEntry]]:
 
     # 6. Hybrid
     hybrid_schema = {
+        "low_source": {
+            "type": "select",
+            "options": [
+                "Image A (Low-pass) + Image B (High-pass)",
+                "Image B (Low-pass) + Image A (High-pass)",
+            ],
+            "default": "Image A (Low-pass) + Image B (High-pass)",
+            "label": "Pass Assignment",
+        },
         "cutoff_low": {
             "type": "int",
             "min": 1,
             "max": 200,
             "step": 1,
             "default": 20,
-            "label": "Cutoff A (Low-pass)",
+            "label": "Cutoff Low-pass (radius)",
         },
         "cutoff_high": {
             "type": "int",
@@ -138,7 +147,7 @@ def _build_catalog() -> dict[str, list[FeatureEntry]]:
             "max": 200,
             "step": 1,
             "default": 20,
-            "label": "Cutoff B (High-pass)",
+            "label": "Cutoff High-pass (radius)",
         },
     }
     catalog["Hybrid"] = [
@@ -180,9 +189,26 @@ def run_feature(
             raise InvalidParameterError("Load a second image first.")
         cutoff_low = params.get("cutoff_low", 20)
         cutoff_high = params.get("cutoff_high", 20)
+        low_source = params.get("low_source", "Image A")
+
+        if "Image B (Low-pass)" in str(low_source):
+            low_img = second_image.array
+            high_img = image_data.array
+        else:
+            low_img = image_data.array
+            high_img = second_image.array
+
+        # Ensure both match target dimensions (image_data's size)
+        target_shape = image_data.array.shape[:2]
+        import cv2
+        if low_img.shape[:2] != target_shape:
+            low_img = cv2.resize(low_img, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_LINEAR)
+        if high_img.shape[:2] != target_shape:
+            high_img = cv2.resize(high_img, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_LINEAR)
+
         hybrid_res: HybridResult = HybridBuilder.build(
-            image_data.array,
-            second_image.array,
+            low_img,
+            high_img,
             cutoff_low=cutoff_low,
             cutoff_high=cutoff_high,
         )

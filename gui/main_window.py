@@ -1,14 +1,15 @@
-"""ImageLab Studio Main Window — Single-Window 3-Pane Layout.
+"""ImageLab Studio Main Window - Single-Window 3-Pane Layout.
 
 Layout:
 - Left Sidebar: Upload, Feature Picker, Parameters, and Actions.
 - Right Splitter (3 equal panes by default):
-  1. Original: ImageViewer showing the current working image.
+  1. Original: ImageViewer showing the locked working image.
   2. Result: Interactive ImageViewer with single / 3-grid views and hybrid scaling.
   3. Analysis: AnalysisPanel with Histogram, CDF, Spectrum, and Details tabs.
 
-Features drag & drop image loading, chained workflow (Ctrl+U), non-destructive
-pipeline, and safe execution with centralized error handling.
+The Original panel is ALWAYS locked to the last explicitly committed image.
+Applying any feature ONLY updates the Result panel.
+The very-first-loaded image is remembered separately so Reset always goes back to it.
 """
 
 import logging
@@ -48,7 +49,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ImageLab — Studio")
+        self.setWindowTitle("ImageLab - Studio")
         self.setMinimumSize(1280, 760)
         self.resize(1440, 880)
 
@@ -56,7 +57,8 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
 
         # Application State
-        self._image_data: ImageData | None = None
+        self._image_data: ImageData | None = None       # current working image
+        self._first_image_data: ImageData | None = None # very first loaded image for true Reset
         self._second_image_data: ImageData | None = None
         self._original_path: str | None = None
         self._read_as_gray: bool = False
@@ -123,9 +125,9 @@ class MainWindow(QMainWindow):
         # 2. Right Splitter (Original | Result | Analysis)
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Pane 1: Original
-        self._viewer_orig = ImageViewer("Original")
-        self._splitter.addWidget(self._viewer_orig)
+        # Pane 1: Original viewer container
+        orig_container = self._create_orig_container()
+        self._splitter.addWidget(orig_container)
 
         # Pane 2: Result Container
         result_container = self._create_result_container()
@@ -138,6 +140,26 @@ class MainWindow(QMainWindow):
         # Equal widths by default
         self._splitter.setSizes([380, 380, 380])
         main_layout.addWidget(self._splitter, 1)
+
+    def _create_orig_container(self) -> QWidget:
+        """Build the Original pane.
+        In Hybrid mode a second viewer (Image B) is shown below via a splitter.
+        """
+        self._orig_container = QWidget()
+        layout = QVBoxLayout(self._orig_container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        # Main original viewer — always shows the locked/committed image
+        self._viewer_orig = ImageViewer("Original")
+        layout.addWidget(self._viewer_orig, 1)
+
+        # Hybrid Image B viewer — hidden until Hybrid mode is active
+        self._viewer_img_b = ImageViewer("Image B")
+        self._viewer_img_b.setVisible(False)
+        layout.addWidget(self._viewer_img_b, 1)
+
+        return self._orig_container
 
     def _create_result_container(self) -> QWidget:
         """Build the Result pane with stacked single viewer / 3-grid edge view."""
@@ -173,7 +195,7 @@ class MainWindow(QMainWindow):
         self._scale_bar = QWidget()
         scale_layout = QHBoxLayout(self._scale_bar)
         scale_layout.setContentsMargins(4, 2, 4, 2)
-        scale_layout.addWidget(QLabel("🔍 Hybrid Preview Scale %:"))
+        scale_layout.addWidget(QLabel("Hybrid Preview Scale %:"))
 
         self._scale_slider = QSlider(Qt.Orientation.Horizontal)
         self._scale_slider.setRange(10, 100)
@@ -211,6 +233,7 @@ class MainWindow(QMainWindow):
         self._sidebar.reset_requested.connect(self._on_reset_original)
         self._sidebar.save_requested.connect(self._on_save_result)
         self._sidebar.edge_view_changed.connect(self._on_edge_view_changed)
+        self._sidebar.params_changed.connect(self._update_viewer_titles)
 
     # ------------------------------------------------------------------ Image Loading & Drag-and-Drop
 
@@ -223,10 +246,13 @@ class MainWindow(QMainWindow):
         self._original_path = path
         self._read_as_gray = as_gray
         self._image_data = data
+        # Remember the very first loaded image so Reset always goes back to it
+        self._first_image_data = data
         self._history = ["Original"]
         self._last_result = None
         self._last_extras = {}
 
+        # Original panel shows the loaded image; Result is cleared
         self._viewer_orig.set_image(data.array)
         self._viewer_result.clear()
         self._viewer_gx.clear()
@@ -263,6 +289,8 @@ class MainWindow(QMainWindow):
             if data is not None:
                 self._second_image_data = data
                 self._sidebar.set_second_image(data)
+                # Also show Image B in the viewer next to Original
+                self._viewer_img_b.set_image(data.array)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         """Accept file drag events."""
@@ -283,9 +311,32 @@ class MainWindow(QMainWindow):
         """Handle feature selection change in sidebar."""
         is_hybrid = entry.group == "Hybrid"
         self._scale_bar.setVisible(is_hybrid)
+        # Show Image B viewer only in Hybrid mode
+        self._viewer_img_b.setVisible(is_hybrid)
+        self._update_viewer_titles()
+
+    def _update_viewer_titles(self) -> None:
+        """Update Original and Image B titles depending on active mode and frequency assignment."""
+        entry = self._sidebar.selected_feature
+        if entry is not None and entry.group == "Hybrid":
+            params = self._sidebar.current_params
+            low_source = params.get("low_source", "")
+            if "Image B (Low-pass)" in str(low_source):
+                self._viewer_orig.set_title_base("Image A (High-pass)")
+                self._viewer_img_b.set_title_base("Image B (Low-pass)")
+            else:
+                self._viewer_orig.set_title_base("Image A (Low-pass)")
+                self._viewer_img_b.set_title_base("Image B (High-pass)")
+        else:
+            self._viewer_orig.set_title_base("Original")
+            self._viewer_img_b.set_title_base("Image B")
 
     def _on_apply_feature(self) -> None:
-        """Execute currently selected feature with current parameters."""
+        """Execute currently selected feature with current parameters.
+
+        IMPORTANT: this method NEVER touches self._viewer_orig.
+        The Original panel is only changed by _load_image_file and _on_commit_result.
+        """
         if self._image_data is None:
             show_error(UnsupportedImageError("Open an image first."), parent=self)
             return
@@ -311,7 +362,7 @@ class MainWindow(QMainWindow):
         self._last_result = output.result
         self._last_extras = output.extras
 
-        # Update Result View
+        # Update Result View only
         self._update_result_display()
 
         # Update Analysis Panel
@@ -374,12 +425,16 @@ class MainWindow(QMainWindow):
         self._update_result_display()
 
     def _on_commit_result(self) -> None:
-        """Use result as new input (Ctrl+U) to chain operations."""
+        """Use result as new input (Ctrl+U) to chain operations.
+
+        The Original panel is updated to the new working image.
+        The very first loaded image (_first_image_data) is preserved for Reset.
+        """
         if self._last_result is None:
             show_error(Exception("No result to use. Apply an operation first."), parent=self)
             return
 
-        # Wrap in ImageData
+        # Wrap result in ImageData
         new_data = ImageData.from_array(self._last_result, self._original_path)
         self._image_data = new_data
 
@@ -388,7 +443,7 @@ class MainWindow(QMainWindow):
         name = entry.name if entry else "Operation"
         self._history.append(name)
 
-        # Refresh UI
+        # Update Original panel to the committed image, clear Result
         self._viewer_orig.set_image(new_data.array)
         self._viewer_result.clear()
         self._last_result = None
@@ -399,12 +454,30 @@ class MainWindow(QMainWindow):
         self._update_status()
 
     def _on_reset_original(self) -> None:
-        """Reload original file and reset pipeline."""
-        if self._original_path is None:
-            show_error(Exception("No original image to reset to."), parent=self)
+        """Reload the VERY FIRST loaded image and reset the entire pipeline."""
+        if self._first_image_data is None:
+            if self._original_path is None:
+                show_error(Exception("No original image to reset to."), parent=self)
+                return
+            # Fall back to reloading from disk if _first_image_data is somehow None
+            self._load_image_file(self._original_path, self._read_as_gray)
             return
 
-        self._load_image_file(self._original_path, self._read_as_gray)
+        # Restore state to the very first loaded image without disk I/O
+        self._image_data = self._first_image_data
+        self._history = ["Original"]
+        self._last_result = None
+        self._last_extras = {}
+
+        self._viewer_orig.set_image(self._first_image_data.array)
+        self._viewer_result.clear()
+        self._viewer_gx.clear()
+        self._viewer_gy.clear()
+        self._viewer_mag.clear()
+
+        self._analysis_panel.set_original(self._first_image_data)
+        self._sidebar.set_history(self._history)
+        self._update_status()
 
     def _on_save_result(self) -> None:
         """Save the last result to disk (Ctrl+S)."""
@@ -447,12 +520,12 @@ class MainWindow(QMainWindow):
             if self._original_path:
                 parts.append(Path(self._original_path).name)
             h, w = self._image_data.shape[:2]
-            parts.append(f"{w}×{h}")
+            parts.append(f"{w}x{h}")
             parts.append("Gray" if self._image_data.is_gray else "RGB")
         if self._history:
             parts.append(" > ".join(self._history))
         self._status.showMessage(
             "   |   ".join(parts)
             if parts
-            else "No image loaded — Open an image or drag & drop to begin"
+            else "No image loaded - Open an image or drag & drop to begin"
         )

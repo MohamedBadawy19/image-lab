@@ -85,13 +85,16 @@ class AnalysisPanel(QWidget):
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        # Overlay checkbox
+        # Source info + overlay checkbox
         top_row = QHBoxLayout()
+        self._hist_source_label = QLabel("Source: Original")
+        self._hist_source_label.setStyleSheet("color: #89b4fa; font-size: 10px; font-weight: bold;")
+        top_row.addWidget(self._hist_source_label)
+        top_row.addStretch()
         self._overlay_check = QCheckBox("Overlay Result on Original")
         self._overlay_check.setChecked(False)
         self._overlay_check.toggled.connect(self._render_histogram)
         top_row.addWidget(self._overlay_check)
-        top_row.addStretch()
         layout.addLayout(top_row)
 
         self._hist_plot = PlotCanvas(width=5, height=3)
@@ -111,6 +114,13 @@ class AnalysisPanel(QWidget):
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(4, 4, 4, 4)
 
+        top_row = QHBoxLayout()
+        self._cdf_source_label = QLabel("Source: Original")
+        self._cdf_source_label.setStyleSheet("color: #89b4fa; font-size: 10px; font-weight: bold;")
+        top_row.addWidget(self._cdf_source_label)
+        top_row.addStretch()
+        layout.addLayout(top_row)
+
         self._cdf_plot = PlotCanvas(width=5, height=3)
         self._cdf_placeholder = QLabel("Open an image to view CDF")
         self._cdf_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -127,6 +137,13 @@ class AnalysisPanel(QWidget):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(4, 4, 4, 4)
+
+        top_row = QHBoxLayout()
+        self._spectrum_source_label = QLabel("Source: Original")
+        self._spectrum_source_label.setStyleSheet("color: #89b4fa; font-size: 10px; font-weight: bold;")
+        top_row.addWidget(self._spectrum_source_label)
+        top_row.addStretch()
+        layout.addLayout(top_row)
 
         self._spectrum_viewer = ImageViewer("Fourier Spectrum (log magnitude)")
         self._spectrum_placeholder = QLabel("Fourier spectrum not available yet")
@@ -171,6 +188,7 @@ class AnalysisPanel(QWidget):
         self._result_array = None
         self._result_analysis = None
         self._extras = {}
+        self._update_source_labels()
         self._update_all()
 
     def set_result(
@@ -182,6 +200,7 @@ class AnalysisPanel(QWidget):
             self._compute_histogram_analysis(result) if result is not None else None
         )
         self._extras = extras or {}
+        self._update_source_labels()
         self._update_all()
 
     def clear(self) -> None:
@@ -194,6 +213,23 @@ class AnalysisPanel(QWidget):
         self._update_all()
 
     # ------------------------------------------------------------------ Analysis & Rendering
+
+    def _update_source_labels(self) -> None:
+        """Update the 'Source:' labels on each tab to show Original vs Result."""
+        if self._result_array is not None and not self._overlay_check.isChecked():
+            src_hist = "Source: Result"
+            src_cdf = "Source: Result"
+            src_spec = "Source: Result"
+        else:
+            src_hist = "Source: Original" if not self._overlay_check.isChecked() else "Source: Original  (+ Result overlay)"
+            src_cdf = "Source: Result" if self._result_analysis is not None else "Source: Original"
+            src_spec = "Source: Result" if self._result_array is not None else "Source: Original"
+        if hasattr(self, "_hist_source_label"):
+            self._hist_source_label.setText(src_hist)
+        if hasattr(self, "_cdf_source_label"):
+            self._cdf_source_label.setText(src_cdf)
+        if hasattr(self, "_spectrum_source_label"):
+            self._spectrum_source_label.setText(src_spec)
 
     def _update_all(self) -> None:
         """Refresh all inner tabs with currently cached analysis."""
