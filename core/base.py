@@ -43,7 +43,8 @@ class ImageProcessor(ABC):
 
     name: str = ""
     params_schema: dict = {}
-    handles_color: bool = False
+    is_per_channel = True
+
 
     def apply(self, image: np.ndarray, **params):
         params = self._with_defaults(params)
@@ -51,7 +52,7 @@ class ImageProcessor(ABC):
         return self._finalize(self._run(to_float(image), **params))
 
     def _run(self, data, **params):
-        if data.ndim == 3 and not self.handles_color:
+        if data.ndim == 3 and self.is_per_channel:
             method = getattr(self, "method", None)
             title = f"{self.name} ({method})" if method else self.name
             print(f"## {title}")

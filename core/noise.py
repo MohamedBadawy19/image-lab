@@ -3,21 +3,26 @@
 import numpy as np
 
 from core.base import ImageProcessor
+import random
+
 
 
 class UniformNoise(ImageProcessor):
     name = "Uniform"
+    is_per_channel = False
     params_schema = {
         "low": {"type": "int", "min": -100, "max": 0, "step": 1, "default": -30, "label": "Low"},
         "high": {"type": "int", "min": 0, "max": 100, "step": 1, "default": 30, "label": "High"},
     }
 
     def _process(self, image: np.ndarray, low, high, **_):
-        raise NotImplementedError
+        noisy = image + np.random.uniform(low, high, image.shape)
+        return noisy
 
 
 class GaussianNoise(ImageProcessor):
     name = "Gaussian"
+    is_per_channel = False
     params_schema = {
         "mean": {
             "type": "float",
@@ -38,11 +43,13 @@ class GaussianNoise(ImageProcessor):
     }
 
     def _process(self, image: np.ndarray, mean, sigma, **_):
-        raise NotImplementedError
+        noisy = image + np.random.normal(mean, sigma, image.shape)
+        return noisy
 
 
 class SaltPepperNoise(ImageProcessor):
     name = "Salt & Pepper"
+    is_per_channel = False
     params_schema = {
         "amount": {
             "type": "float",
@@ -63,7 +70,30 @@ class SaltPepperNoise(ImageProcessor):
     }
 
     def _process(self, image: np.ndarray, amount, salt_ratio, **_):
-        raise NotImplementedError
+        image = image.copy()
+        H = image.shape[0]      # rows      =>   y
+        W = image.shape[1]      # colunms   =>   x
+        N = int(amount *W * H)
+        N_salt = int(N*salt_ratio)
+
+        points = set()
+        while len(points) < N:
+            x = random.randint(0, W-1)
+            y = random.randint(0, H-1)
+            points.add((x, y))
+        points = list(points)  
+        random.shuffle(points)  # Must convert to list before shuffle
+        
+        salt_points = points[:N_salt]
+        pepper_points = points[N_salt:]
+
+        for x, y in salt_points:
+            image[y, x] = 255     # row first, then column
+
+        for x, y in pepper_points:
+            image[y, x] = 0
+
+        return image
 
 
 NOISES = {c.name: c for c in (UniformNoise, GaussianNoise, SaltPepperNoise)}
