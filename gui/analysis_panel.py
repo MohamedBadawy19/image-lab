@@ -162,7 +162,7 @@ class AnalysisPanel(QWidget):
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        self._details_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._details_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._detail_viewer1 = ImageViewer("Extra 1")
         self._detail_viewer2 = ImageViewer("Extra 2")
         self._details_splitter.addWidget(self._detail_viewer1)

@@ -5,8 +5,8 @@ ensuring that no feature names or parameter keys are hardcoded. It emits Qt sign
 for all user actions and never touches the core modules directly.
 
 Features are directly selectable with 1-click, organized by clean flat category
-dividers, with an optional category filter dropdown. The parameter panel explicitly
-displays the name of the currently selected feature.
+dividers, with an optional category filter dropdown.
+Includes dedicated per-image collapsible control groups for Hybrid mode.
 """
 
 from PySide6.QtCore import Qt, Signal
@@ -21,14 +21,168 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QSizePolicy,
+    QSlider,
+    QSpinBox,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from core.filters import FILTERS
 from core.image_data import ImageData
+from core.noise import NOISES
 from gui.features import CATALOG, FeatureEntry
-from gui.widgets import ImageViewer, ParamPanel
+from gui.widgets import CollapsibleBox, JumpSlider, ParamPanel
+
+
+class ImageControlWidget(QWidget):
+    """Controls for a single hybrid image: role cutoff, independent filter & noise."""
+
+    changed = Signal()
+
+    def __init__(self, name: str, default_cutoff: int = 20, is_low: bool = True, parent=None):
+        super().__init__(parent)
+        self._name = name
+        self._is_low = is_low
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(6)
+
+        # 1. Role Badge & Cutoff
+        self._role_label = QLabel(f"Role: {'Low-pass' if is_low else 'High-pass'}")
+        self._role_label.setStyleSheet("color: #89b4fa; font-weight: bold; font-size: 11px;")
+        layout.addWidget(self._role_label)
+
+        cutoff_box = QHBoxLayout()
+        self._cutoff_title = QLabel("Cutoff (radius):")
+        self._cutoff_title.setStyleSheet("font-size: 11px;")
+        cutoff_box.addWidget(self._cutoff_title)
+
+        self._cutoff_slider = JumpSlider(Qt.Orientation.Horizontal)
+        self._cutoff_slider.setRange(1, 200)
+        self._cutoff_slider.setValue(default_cutoff)
+
+        self._cutoff_spin = QSpinBox()
+        self._cutoff_spin.setRange(1, 200)
+        self._cutoff_spin.setValue(default_cutoff)
+        self._cutoff_spin.setStyleSheet("""
+            QSpinBox {
+                background: #313244;
+                border: 1px solid #45475a;
+                border-radius: 4px;
+                padding: 2px 4px;
+                color: #cdd6f4;
+                font-size: 11px;
+                min-width: 58px;
+            }
+            QSpinBox::up-button {
+                subcontrol-origin: border;
+                subcontrol-position: top right;
+                width: 16px;
+                border-left: 1px solid #45475a;
+                border-bottom: 1px solid #45475a;
+                background: #313244;
+            }
+            QSpinBox::up-button:hover {
+                background: #45475a;
+            }
+            QSpinBox::down-button {
+                subcontrol-origin: border;
+                subcontrol-position: bottom right;
+                width: 16px;
+                border-left: 1px solid #45475a;
+                background: #313244;
+            }
+            QSpinBox::down-button:hover {
+                background: #45475a;
+            }
+        """)
+
+        self._cutoff_slider.valueChanged.connect(self._cutoff_spin.setValue)
+        self._cutoff_spin.valueChanged.connect(self._cutoff_slider.setValue)
+        self._cutoff_slider.valueChanged.connect(lambda: self.changed.emit())
+
+        cutoff_box.addWidget(self._cutoff_slider)
+        cutoff_box.addWidget(self._cutoff_spin)
+        layout.addLayout(cutoff_box)
+
+        # 2. Filter selection & parameters
+        f_box = QHBoxLayout()
+        f_lbl = QLabel("Filter:")
+        f_lbl.setStyleSheet("font-size: 11px;")
+        f_box.addWidget(f_lbl)
+
+        self._filter_combo = QComboBox()
+        self._filter_combo.addItem("None")
+        for f_name in FILTERS.keys():
+            self._filter_combo.addItem(f_name)
+        self._filter_combo.currentTextChanged.connect(self._on_filter_changed)
+        f_box.addWidget(self._filter_combo, 1)
+        layout.addLayout(f_box)
+
+        self._filter_params = ParamPanel()
+        self._filter_params.setTitle("Filter Parameters")
+        self._filter_params.changed.connect(self.changed.emit)
+        self._filter_params.setVisible(False)
+        layout.addWidget(self._filter_params)
+
+        # 3. Noise selection & parameters
+        n_box = QHBoxLayout()
+        n_lbl = QLabel("Noise:")
+        n_lbl.setStyleSheet("font-size: 11px;")
+        n_box.addWidget(n_lbl)
+
+        self._noise_combo = QComboBox()
+        self._noise_combo.addItem("None")
+        for n_name in NOISES.keys():
+            self._noise_combo.addItem(n_name)
+        self._noise_combo.currentTextChanged.connect(self._on_noise_changed)
+        n_box.addWidget(self._noise_combo, 1)
+        layout.addLayout(n_box)
+
+        self._noise_params = ParamPanel()
+        self._noise_params.setTitle("Noise Parameters")
+        self._noise_params.changed.connect(self.changed.emit)
+        self._noise_params.setVisible(False)
+        layout.addWidget(self._noise_params)
+
+    def set_role(self, is_low: bool) -> None:
+        self._is_low = is_low
+        role_str = "Low-pass" if is_low else "High-pass"
+        self._role_label.setText(f"Role: {role_str}")
+        self._cutoff_title.setText(f"{role_str} Cutoff:")
+
+    def _on_filter_changed(self, text: str) -> None:
+        if text == "None" or text not in FILTERS:
+            self._filter_params.setVisible(False)
+        else:
+            cls = FILTERS[text]
+            self._filter_params.set_schema(cls.params_schema)
+            self._filter_params.setTitle(f"{text} Parameters")
+            self._filter_params.setVisible(True)
+        self.changed.emit()
+
+    def _on_noise_changed(self, text: str) -> None:
+        if text == "None" or text not in NOISES:
+            self._noise_params.setVisible(False)
+        else:
+            cls = NOISES[text]
+            self._noise_params.set_schema(cls.params_schema)
+            self._noise_params.setTitle(f"{text} Parameters")
+            self._noise_params.setVisible(True)
+        self.changed.emit()
+
+    def get_params(self) -> dict:
+        f_text = self._filter_combo.currentText()
+        n_text = self._noise_combo.currentText()
+        return {
+            "cutoff": self._cutoff_spin.value(),
+            "filter": f_text,
+            "filter_params": self._filter_params.values() if f_text != "None" else {},
+            "noise": n_text,
+            "noise_params": self._noise_params.values() if n_text != "None" else {},
+        }
 
 
 class Sidebar(QWidget):
@@ -48,7 +202,7 @@ class Sidebar(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(330)
+        self.setFixedWidth(340)
 
         # State
         self._current_feature: FeatureEntry | None = None
@@ -71,14 +225,14 @@ class Sidebar(QWidget):
         # 1. Upload & Mode section
         self._setup_upload_section()
 
-        # 2. Second Image slot (Hybrid only)
-        self._setup_second_image_section()
-
-        # 3. Feature Picker with clean flat categories
+        # 2. Feature Picker with clean flat categories
         self._setup_feature_picker()
 
-        # 4. Parameters section
+        # 3. Parameters section (standard modes)
         self._setup_params_section()
+
+        # 4. Dedicated Hybrid Controls section (Image A & Image B collapsible groups)
+        self._setup_hybrid_section()
 
         # 5. Actions & Buttons
         self._setup_actions_section()
@@ -126,38 +280,6 @@ class Sidebar(QWidget):
         group.setLayout(layout)
         self._layout.addWidget(group)
 
-    def _setup_second_image_section(self) -> None:
-        """Create the second image slot for Hybrid feature with swap controls."""
-        self._second_img_group = QGroupBox("Hybrid Source Controls")
-        layout = QVBoxLayout()
-        layout.setContentsMargins(8, 14, 8, 8)
-        layout.setSpacing(6)
-
-        # Dynamic info label explaining which image is low-pass and which is high-pass
-        self._hybrid_role_label = QLabel("Low-pass: Image A (Original)  |  High-pass: Image B (Second)")
-        self._hybrid_role_label.setStyleSheet("color: #89b4fa; font-size: 11px; font-weight: bold;")
-        self._hybrid_role_label.setWordWrap(True)
-        layout.addWidget(self._hybrid_role_label)
-
-        btn_row = QHBoxLayout()
-        self._btn_load_second = QPushButton("Load Image B")
-        self._btn_load_second.clicked.connect(self.second_image_requested.emit)
-        btn_row.addWidget(self._btn_load_second)
-
-        self._btn_swap_roles = QPushButton("Swap Roles (A ↔ B)")
-        self._btn_swap_roles.setToolTip("Swap which image is Low-pass and which is High-pass")
-        self._btn_swap_roles.clicked.connect(self._on_swap_hybrid_roles)
-        btn_row.addWidget(self._btn_swap_roles)
-        layout.addLayout(btn_row)
-
-        self._second_img_thumb = ImageViewer("Image B Preview")
-        self._second_img_thumb.setFixedHeight(120)
-        layout.addWidget(self._second_img_thumb)
-
-        self._second_img_group.setLayout(layout)
-        self._second_img_group.setVisible(False)
-        self._layout.addWidget(self._second_img_group)
-
     def _setup_feature_picker(self) -> None:
         """Build the feature picker dynamically from CATALOG using clean flat sections."""
         group = QGroupBox("Features")
@@ -186,7 +308,7 @@ class Sidebar(QWidget):
             cat_layout.setContentsMargins(0, 4, 0, 4)
             cat_layout.setSpacing(3)
 
-            # Flat section header (replaces nested QGroupBox so zero border overlap)
+            # Flat section header
             header = QLabel(f"── {group_name.upper()} ──")
             header.setStyleSheet(
                 "color: #89b4fa; font-weight: bold; font-size: 11px; "
@@ -255,6 +377,52 @@ class Sidebar(QWidget):
         self._edge_view_group.setVisible(False)
         self._layout.addWidget(self._edge_view_group)
 
+    def _setup_hybrid_section(self) -> None:
+        """Create dedicated hybrid controls with separate Image A and Image B collapsible groups."""
+        self._hybrid_group = QGroupBox("Hybrid Image Controls")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(8, 14, 8, 8)
+        layout.setSpacing(6)
+
+        # 1. Load second image button + status
+        b_row = QHBoxLayout()
+        self._btn_load_second = QPushButton("Load Image B")
+        self._btn_load_second.clicked.connect(self.second_image_requested.emit)
+        self._img_b_status = QLabel("Image B: Not loaded")
+        self._img_b_status.setStyleSheet("color: #a6adc8; font-size: 10px;")
+        b_row.addWidget(self._btn_load_second)
+        b_row.addWidget(self._img_b_status)
+        layout.addLayout(b_row)
+
+        # 2. Pass Assignment
+        assign_lbl = QLabel("Pass Assignment:")
+        assign_lbl.setStyleSheet("font-size: 11px; font-weight: bold; color: #89b4fa;")
+        layout.addWidget(assign_lbl)
+
+        self._hybrid_role_combo = QComboBox()
+        self._hybrid_role_combo.addItem("Image A (Low-pass) + Image B (High-pass)")
+        self._hybrid_role_combo.addItem("Image B (Low-pass) + Image A (High-pass)")
+        self._hybrid_role_combo.currentIndexChanged.connect(self._on_hybrid_role_changed)
+        layout.addWidget(self._hybrid_role_combo)
+
+        # 3. Image A Collapsible Controls
+        self._box_img_a = CollapsibleBox("Image A Controls", is_expanded=True)
+        self._img_a_ctrl = ImageControlWidget(name="Image A", default_cutoff=20, is_low=True)
+        self._img_a_ctrl.changed.connect(self._on_params_changed)
+        self._box_img_a.content_layout.addWidget(self._img_a_ctrl)
+        layout.addWidget(self._box_img_a)
+
+        # 4. Image B Collapsible Controls
+        self._box_img_b = CollapsibleBox("Image B Controls", is_expanded=True)
+        self._img_b_ctrl = ImageControlWidget(name="Image B", default_cutoff=20, is_low=False)
+        self._img_b_ctrl.changed.connect(self._on_params_changed)
+        self._box_img_b.content_layout.addWidget(self._img_b_ctrl)
+        layout.addWidget(self._box_img_b)
+
+        self._hybrid_group.setLayout(layout)
+        self._hybrid_group.setVisible(False)
+        self._layout.addWidget(self._hybrid_group)
+
     def _setup_actions_section(self) -> None:
         """Create Apply, Live preview, Use as input, Reset, Save buttons."""
         group = QGroupBox("Actions")
@@ -299,6 +467,8 @@ class Sidebar(QWidget):
 
     @property
     def current_params(self) -> dict:
+        if self._current_feature and self._current_feature.group == "Hybrid":
+            return self._get_hybrid_params()
         return self._param_panel.values()
 
     @property
@@ -306,11 +476,15 @@ class Sidebar(QWidget):
         return self._live_check.isChecked()
 
     def set_second_image(self, image_data: ImageData | None) -> None:
-        """Update thumbnail in the second image slot."""
+        """Update second image status label."""
         if image_data is not None:
-            self._second_img_thumb.set_image(image_data.array)
+            h, w = image_data.shape[:2]
+            mode = "Gray" if image_data.is_gray else "RGB"
+            self._img_b_status.setText(f"Image B: {w}x{h} {mode}")
+            self._img_b_status.setStyleSheet("color: #a6e3a1; font-size: 10px; font-weight: bold;")
         else:
-            self._second_img_thumb.clear()
+            self._img_b_status.setText("Image B: Not loaded")
+            self._img_b_status.setStyleSheet("color: #a6adc8; font-size: 10px;")
 
     def set_history(self, history: list[str]) -> None:
         """Update history label display."""
@@ -330,7 +504,6 @@ class Sidebar(QWidget):
         self._btn_reset.setEnabled(enabled)
         self._btn_save.setEnabled(enabled)
         self._btn_load_second.setEnabled(enabled)
-        self._btn_swap_roles.setEnabled(enabled)
         self._live_check.setEnabled(enabled)
 
     # ------------------------------------------------------------------ Internal Slots
@@ -362,44 +535,52 @@ class Sidebar(QWidget):
     def _update_selected_feature(self, entry: FeatureEntry) -> None:
         """Reconfigure UI components for the newly selected feature."""
         self._current_feature = entry
+        is_hybrid = entry.group == "Hybrid"
 
-        # Update params panel with feature name and schema
-        self._param_panel.set_feature(entry.name, entry.params_schema)
-
-        # Show/hide second image slot
-        self._second_img_group.setVisible(entry.needs_second_image)
-        if entry.needs_second_image:
-            self._update_hybrid_role_label()
+        if is_hybrid:
+            self._param_panel.setVisible(False)
+            self._hybrid_group.setVisible(True)
+        else:
+            self._hybrid_group.setVisible(False)
+            self._param_panel.setVisible(True)
+            self._param_panel.set_feature(entry.name, entry.params_schema)
 
         # Show/hide edge view options
         self._edge_view_group.setVisible(entry.group == "Edges" and entry.has_xy)
 
         self.feature_selected.emit(entry)
 
-    def _on_swap_hybrid_roles(self) -> None:
-        """Toggle low/high pass assignment in parameter panel."""
-        combo = self._param_panel._controls.get("low_source")
-        if combo is not None:
-            new_idx = 1 if combo.currentIndex() == 0 else 0
-            combo.setCurrentIndex(new_idx)
-        self._update_hybrid_role_label()
+    def _on_hybrid_role_changed(self, index: int) -> None:
+        """Update role badges and cutoff titles in per-image controls."""
+        is_a_low = (index == 0)
+        self._img_a_ctrl.set_role(is_a_low)
+        self._img_b_ctrl.set_role(not is_a_low)
+        self._on_params_changed()
 
-    def _update_hybrid_role_label(self) -> None:
-        """Keep the hybrid role label in sync with param panel selection."""
-        if self._current_feature and self._current_feature.group == "Hybrid":
-            vals = self._param_panel.values()
-            low_source = vals.get("low_source", "")
-            if "Image B (Low-pass)" in str(low_source):
-                self._hybrid_role_label.setText("Low-pass: Image B (Second)  |  High-pass: Image A (Original)")
-            else:
-                self._hybrid_role_label.setText("Low-pass: Image A (Original)  |  High-pass: Image B (Second)")
+    def _get_hybrid_params(self) -> dict:
+        """Assemble current parameters for Hybrid mode."""
+        low_source = self._hybrid_role_combo.currentText()
+        a = self._img_a_ctrl.get_params()
+        b = self._img_b_ctrl.get_params()
+        return {
+            "low_source": low_source,
+            "cutoff_a": a["cutoff"],
+            "cutoff_b": b["cutoff"],
+            "filter_a": a["filter"],
+            "filter_params_a": a["filter_params"],
+            "noise_a": a["noise"],
+            "noise_params_a": a["noise_params"],
+            "filter_b": b["filter"],
+            "filter_params_b": b["filter_params"],
+            "noise_b": b["noise"],
+            "noise_params_b": b["noise_params"],
+        }
 
     def _on_mode_toggled(self, checked: bool) -> None:
         self._mode_btn.setText("Read mode: Gray" if checked else "Read mode: RGB")
         self.read_mode_toggled.emit(checked)
 
     def _on_params_changed(self) -> None:
-        self._update_hybrid_role_label()
         self.params_changed.emit()
         if self._live_check.isChecked():
             self.apply_requested.emit()

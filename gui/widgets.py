@@ -37,7 +37,10 @@ class ImageViewer(QGroupBox):
     Features: mouse-wheel zoom, drag pan, double-click / Fit button to reset.
     Shows image size and a Gray/RGB badge in the title.
     Re-fits automatically on window/panel resize.
+    Supports linked zoom/pan synchronization with other viewers.
     """
+
+    zoom_pan_changed = Signal(object, float, float, float)  # (viewer_self, zoom, h_ratio, v_ratio)
 
     def __init__(self, title: str = "Image", parent=None):
         super().__init__(title, parent)
@@ -48,6 +51,7 @@ class ImageViewer(QGroupBox):
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(False)
         self._scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._scroll.setStyleSheet("QScrollArea { border: none; background: #181825; }")
 
         # Label that holds the pixmap
         self._label = QLabel()
@@ -71,7 +75,7 @@ class ImageViewer(QGroupBox):
         header_layout.addWidget(self._fit_btn)
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(2)
         layout.addWidget(header)
         layout.addWidget(self._scroll, 1)
@@ -79,6 +83,7 @@ class ImageViewer(QGroupBox):
 
         self._pixmap = None  # QPixmap | None
         self._zoom = 1.0  # 1.0 == fit-to-panel mode
+        self._is_syncing = False
 
         # Drag-pan state
         self._dragging = False
@@ -126,6 +131,33 @@ class ImageViewer(QGroupBox):
         self._title_base = title
         self._update_title()
 
+    def sync_view(self, zoom: float, h_ratio: float, v_ratio: float) -> None:
+        """Synchronize zoom and pan positions from another viewer."""
+        if self._pixmap is None or self._is_syncing:
+            return
+        self._is_syncing = True
+        try:
+            self._zoom = zoom
+            self._update_display()
+            h_bar = self._scroll.horizontalScrollBar()
+            v_bar = self._scroll.verticalScrollBar()
+            if h_bar.maximum() > 0:
+                h_bar.setValue(int(h_ratio * h_bar.maximum()))
+            if v_bar.maximum() > 0:
+                v_bar.setValue(int(v_ratio * v_bar.maximum()))
+        finally:
+            self._is_syncing = False
+
+    def _emit_zoom_pan(self) -> None:
+        """Notify listeners of current zoom factor and scrollbar relative ratios."""
+        if self._is_syncing or self._pixmap is None:
+            return
+        h_bar = self._scroll.horizontalScrollBar()
+        v_bar = self._scroll.verticalScrollBar()
+        h_ratio = h_bar.value() / h_bar.maximum() if h_bar.maximum() > 0 else 0.5
+        v_ratio = v_bar.value() / v_bar.maximum() if v_bar.maximum() > 0 else 0.5
+        self.zoom_pan_changed.emit(self, self._zoom, h_ratio, v_ratio)
+
     # -- Internal helpers --
 
     def _viewport_size(self) -> QSize:
@@ -136,6 +168,7 @@ class ImageViewer(QGroupBox):
         """Reset to fit-to-panel mode."""
         self._zoom = 1.0
         self._update_display()
+        self._emit_zoom_pan()
 
     def _update_title(self) -> None:
         """Update the group-box title with size + Gray/RGB badge."""
@@ -218,6 +251,7 @@ class ImageViewer(QGroupBox):
                 self._zoom = min(fit_w, fit_h)
             self._zoom = max(0.05, min(20.0, self._zoom * factor))
             self._update_display()
+            self._emit_zoom_pan()
             return True
 
         if event.type() == event.Type.MouseButtonPress:
@@ -232,6 +266,7 @@ class ImageViewer(QGroupBox):
             delta = event.globalPosition().toPoint() - self._drag_start
             self._scroll.horizontalScrollBar().setValue(self._scroll_start_h - delta.x())
             self._scroll.verticalScrollBar().setValue(self._scroll_start_v - delta.y())
+            self._emit_zoom_pan()
             return True
 
         if event.type() == event.Type.MouseButtonRelease:
@@ -243,6 +278,147 @@ class ImageViewer(QGroupBox):
             return True
 
         return super().eventFilter(obj, event)
+
+
+# ---------------------------------------------------------------------------
+# CollapsibleBox - accordion section for complex parameter groups
+# ---------------------------------------------------------------------------
+
+
+class CollapsibleBox(QWidget):
+    """Collapsible container with a clickable header button and arrow indicator."""
+
+    toggled = Signal(bool)
+
+    def __init__(self, title: str = "", parent=None, is_expanded: bool = True):
+        super().__init__(parent)
+        self._is_expanded = is_expanded
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 2, 0, 2)
+        main_layout.setSpacing(0)
+
+        # Header button
+        self._toggle_btn = QPushButton(title)
+        self._toggle_btn.setCheckable(True)
+        self._toggle_btn.setChecked(is_expanded)
+        self._update_header_text(title)
+        self._toggle_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #313244;
+                border: 1px solid #45475a;
+                border-radius: 6px;
+                padding: 6px 10px;
+                text-align: left;
+                font-weight: bold;
+                font-size: 11px;
+                color: #cdd6f4;
+            }
+            QPushButton:hover {
+                background-color: #45475a;
+                color: #89b4fa;
+            }
+            QPushButton:checked {
+                border-bottom-left-radius: 0px;
+                border-bottom-right-radius: 0px;
+            }
+        """)
+        self._toggle_btn.clicked.connect(self._on_toggle)
+
+        # Content area
+        self._content_area = QWidget()
+        self._content_layout = QVBoxLayout(self._content_area)
+        self._content_layout.setContentsMargins(8, 8, 8, 8)
+        self._content_layout.setSpacing(6)
+        self._content_area.setStyleSheet("""
+            QWidget {
+                background-color: #1e1e2e;
+                border: 1px solid #45475a;
+                border-top: none;
+                border-bottom-left-radius: 6px;
+                border-bottom-right-radius: 6px;
+            }
+        """)
+        self._content_area.setVisible(is_expanded)
+
+        main_layout.addWidget(self._toggle_btn)
+        main_layout.addWidget(self._content_area)
+
+    @property
+    def content_layout(self) -> QVBoxLayout:
+        return self._content_layout
+
+    def set_title(self, title: str) -> None:
+        self._update_header_text(title)
+
+    def _update_header_text(self, title: str) -> None:
+        arrow = "▼" if self._is_expanded else "▶"
+        self._toggle_btn.setText(f"{arrow}  {title}")
+
+    def _on_toggle(self) -> None:
+        self._is_expanded = self._toggle_btn.isChecked()
+        # Strip current arrow prefix
+        text = self._toggle_btn.text().lstrip("▼▶ ")
+        self._update_header_text(text)
+        self._content_area.setVisible(self._is_expanded)
+        self.toggled.emit(self._is_expanded)
+
+# ---------------------------------------------------------------------------
+# JumpSlider - click-to-jump and smooth dragging slider
+# ---------------------------------------------------------------------------
+
+
+class JumpSlider(QSlider):
+    """QSlider that immediately jumps to click position and tracks smooth dragging."""
+
+    def __init__(self, orientation=Qt.Orientation.Horizontal, parent=None):
+        super().__init__(orientation, parent)
+        self.setStyleSheet("""
+            QSlider::groove:horizontal {
+                height: 6px;
+                background: #45475a;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #89b4fa;
+                width: 16px;
+                margin: -5px 0;
+                border-radius: 8px;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #b4befe;
+            }
+        """)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._set_value_from_pos(event.position().x())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            self._set_value_from_pos(event.position().x())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._set_value_from_pos(event.position().x())
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _set_value_from_pos(self, x_pos: float) -> None:
+        w = max(1, self.width())
+        ratio = max(0.0, min(1.0, x_pos / w))
+        val = self.minimum() + ratio * (self.maximum() - self.minimum())
+        step = self.singleStep()
+        if step > 0:
+            val = round(val / step) * step
+        self.setValue(int(round(val)))
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +442,7 @@ class PlotCanvas(FigureCanvasQTAgg):
         self.axes = self.fig.add_subplot(111)
         self._style_axes(self.axes)
         super().__init__(self.fig)
-        self.setMinimumHeight(180)
+        self.setMinimumSize(420, 200)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     def _style_axes(self, ax) -> None:
@@ -432,19 +608,54 @@ class ParamPanel(QGroupBox):
         row = QHBoxLayout()
         row.addWidget(QLabel(label))
 
+        SPIN_STYLE = """
+            QSpinBox, QDoubleSpinBox {
+                background: #313244;
+                border: 1px solid #45475a;
+                border-radius: 4px;
+                padding: 2px 4px;
+                color: #cdd6f4;
+                font-size: 11px;
+                min-width: 58px;
+            }
+            QSpinBox::up-button, QDoubleSpinBox::up-button {
+                subcontrol-origin: border;
+                subcontrol-position: top right;
+                width: 16px;
+                border-left: 1px solid #45475a;
+                border-bottom: 1px solid #45475a;
+                background: #313244;
+            }
+            QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover {
+                background: #45475a;
+            }
+            QSpinBox::down-button, QDoubleSpinBox::down-button {
+                subcontrol-origin: border;
+                subcontrol-position: bottom right;
+                width: 16px;
+                border-left: 1px solid #45475a;
+                background: #313244;
+            }
+            QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
+                background: #45475a;
+            }
+        """
+
         if is_float:
             spin = QDoubleSpinBox()
             spin.setRange(lo, hi)
             spin.setSingleStep(step)
             spin.setDecimals(max(2, len(str(step).split(".")[-1]) if "." in str(step) else 0))
             spin.setValue(default)
+            spin.setStyleSheet(SPIN_STYLE)
         else:
             spin = QSpinBox()
             spin.setRange(int(lo), int(hi))
             spin.setSingleStep(int(step))
             spin.setValue(int(default))
+            spin.setStyleSheet(SPIN_STYLE)
 
-        slider = QSlider(Qt.Orientation.Horizontal)
+        slider = JumpSlider(Qt.Orientation.Horizontal)
         if is_float:
             scale = max(1, int(1.0 / step)) if step < 1 else 1
             slider.setRange(int(lo * scale), int(hi * scale))

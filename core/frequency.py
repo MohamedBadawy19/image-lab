@@ -181,7 +181,7 @@ class HybridBuilder:
         # the actual blend, but center its preview around gray so both polarities show.
         return HybridResult(
             low=to_uint8(low_pass_a),
-            high=to_uint8(high_pass_b + 128),
+            high=to_uint8(high_pass_b ),
             hybrid=to_uint8(low_pass_a + high_pass_b),
         )
 

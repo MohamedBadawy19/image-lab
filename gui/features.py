@@ -167,6 +167,24 @@ def _build_catalog() -> dict[str, list[FeatureEntry]]:
 CATALOG = _build_catalog()
 
 
+def _apply_sub_pipeline(
+    image: np.ndarray,
+    noise_type: str | None,
+    noise_params: dict | None,
+    filter_type: str | None,
+    filter_params: dict | None,
+) -> np.ndarray:
+    """Apply optional noise and filter to a single image channel or RGB array."""
+    out = image.copy()
+    if noise_type and noise_type != "None" and noise_type in NOISES:
+        processor = NOISES[noise_type]()
+        out = processor.apply(out, **(noise_params or {}))
+    if filter_type and filter_type != "None" and filter_type in FILTERS:
+        processor = FILTERS[filter_type]()
+        out = processor.apply(out, **(filter_params or {}))
+    return out
+
+
 def run_feature(
     entry: FeatureEntry,
     image_data: ImageData,
@@ -187,34 +205,63 @@ def run_feature(
     if entry.group == "Hybrid":
         if second_image is None:
             raise InvalidParameterError("Load a second image first.")
-        cutoff_low = params.get("cutoff_low", 20)
-        cutoff_high = params.get("cutoff_high", 20)
+
         low_source = params.get("low_source", "Image A")
+        cutoff_a = params.get("cutoff_a", params.get("cutoff_low", 20))
+        cutoff_b = params.get("cutoff_b", params.get("cutoff_high", 20))
 
-        if "Image B (Low-pass)" in str(low_source):
-            low_img = second_image.array
-            high_img = image_data.array
-        else:
-            low_img = image_data.array
-            high_img = second_image.array
+        # Per-image noise and filters
+        noise_a = params.get("noise_a", "None")
+        noise_params_a = params.get("noise_params_a", {})
+        filter_a = params.get("filter_a", "None")
+        filter_params_a = params.get("filter_params_a", {})
 
-        # Ensure both match target dimensions (image_data's size)
-        target_shape = image_data.array.shape[:2]
-        import cv2
-        if low_img.shape[:2] != target_shape:
-            low_img = cv2.resize(low_img, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_LINEAR)
-        if high_img.shape[:2] != target_shape:
-            high_img = cv2.resize(high_img, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_LINEAR)
+        noise_b = params.get("noise_b", "None")
+        noise_params_b = params.get("noise_params_b", {})
+        filter_b = params.get("filter_b", "None")
+        filter_params_b = params.get("filter_params_b", {})
 
-        hybrid_res: HybridResult = HybridBuilder.build(
-            low_img,
-            high_img,
-            cutoff_low=cutoff_low,
-            cutoff_high=cutoff_high,
+        # Compute modified previews for Image A and Image B
+        modified_a = _apply_sub_pipeline(
+            image_data.array, noise_a, noise_params_a, filter_a, filter_params_a
         )
+        modified_b = _apply_sub_pipeline(
+            second_image.array, noise_b, noise_params_b, filter_b, filter_params_b
+        )
+
+        # Ensure both match target dimensions (Image A's size)
+        target_shape = modified_a.shape[:2]
+        import cv2
+        if modified_b.shape[:2] != target_shape:
+            modified_b = cv2.resize(
+                modified_b, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_LINEAR
+            )
+
+        if "Image B" in str(low_source):
+            # Image B is low-pass source, Image A is high-pass source
+            hybrid_res: HybridResult = HybridBuilder.build(
+                image_a=modified_b,
+                image_b=modified_a,
+                cutoff_low=cutoff_b,
+                cutoff_high=cutoff_a,
+            )
+        else:
+            # Image A is low-pass source, Image B is high-pass source
+            hybrid_res: HybridResult = HybridBuilder.build(
+                image_a=modified_a,
+                image_b=modified_b,
+                cutoff_low=cutoff_a,
+                cutoff_high=cutoff_b,
+            )
+
         return FeatureOutput(
             result=hybrid_res.hybrid,
-            extras={"low": hybrid_res.low, "high": hybrid_res.high},
+            extras={
+                "low": hybrid_res.low,
+                "high": hybrid_res.high,
+                "modified_a": modified_a,
+                "modified_b": modified_b,
+            },
         )
 
     # Special case: Edge detection
