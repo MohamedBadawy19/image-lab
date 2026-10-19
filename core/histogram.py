@@ -44,7 +44,7 @@ class HistogramEqualizer(ImageProcessor):
     name = "Equalize"
     params_schema = {}
 
-    handles_color = True  # receives the full array, not per-channel
+    
 
 
 
@@ -57,13 +57,8 @@ class HistogramEqualizer(ImageProcessor):
         return lut[channel]
 
     def _process(self, image: np.ndarray, **params) -> np.ndarray:
-        if image.ndim == 2:
-            return self._equalize_channel(image)
-        equalized_channels = [
-            self._equalize_channel(image[..., ch])
-            for ch in range(image.shape[-1])
-        ]
-        return np.stack(equalized_channels, axis=-1)
+        
+        return self._equalize_channel(image)
 
 
 
